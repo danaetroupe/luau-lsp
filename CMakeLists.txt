@@ -26,6 +26,8 @@ endif ()
 
 project(Luau.LanguageServer LANGUAGES CXX)
 
+find_package(pretty_diagnostics CONFIG REQUIRED)
+
 # Sentry setup
 if (LSP_BUILD_WITH_SENTRY)
     add_subdirectory(extern/sentry-native)
@@ -200,6 +202,8 @@ target_compile_features(Luau.LanguageServer.Test PRIVATE cxx_std_17)
 target_compile_options(Luau.LanguageServer.Test PRIVATE ${LUAU_LSP_OPTIONS})
 target_include_directories(Luau.LanguageServer.Test PRIVATE tests ${EXTERN_INCLUDES} extern/doctest)
 target_link_libraries(Luau.LanguageServer.Test PRIVATE Luau.Ast Luau.Analysis Luau.LanguageServer)
+
+target_link_libraries(Luau.LanguageServer.CLI PRIVATE pretty_diagnostics::pretty_diagnostics)
 
 if (LSP_BUILD_WITH_SENTRY)
     target_link_libraries(Luau.LanguageServer PRIVATE sentry)

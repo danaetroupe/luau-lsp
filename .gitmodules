@@ -5,5 +5,5 @@
 	path = extern/sentry-native
 	url = https://github.com/getsentry/sentry-native.git
 [submodule "pretty_diagnostics"]
-	path = pretty_diagnostics
+	path = extern/pretty_diagnostics/pretty_diagnostics
 	url = https://github.com/Excse/pretty_diagnostics.git
