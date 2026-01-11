@@ -7,7 +7,7 @@ option(LSP_STATIC_CRT "Link with the static CRT (/MT)" OFF)
 option(LSP_BUILD_WITH_SENTRY "Build with Sentry (crash reporting)" OFF)
 option(LSP_WERROR "Warnings as errors" ON)
 
-set(LSP_VERSION "1.56.2")
+set(LSP_VERSION "1.60.0")
 set(LSP_NAME "Luau")
 
 if (LSP_STATIC_CRT)
@@ -62,6 +62,7 @@ target_sources(Luau.LanguageServer PRIVATE
         src/platform/LSPPlatform.cpp
         src/platform/StringRequireAutoImporter.cpp
         src/platform/StringRequireSuggester.cpp
+        src/platform/roblox/InstanceRequireAutoImporter.cpp
         src/platform/roblox/RobloxCodeAction.cpp
         src/platform/roblox/RobloxColorProvider.cpp
         src/platform/roblox/RobloxCompletion.cpp
@@ -89,6 +90,7 @@ target_sources(Luau.LanguageServer PRIVATE
         src/operations/CallHierarchy.cpp
         src/operations/Bytecode.cpp
         src/operations/RequireGraph.cpp
+        src/operations/OnTypeFormatting.cpp
         src/transport/PipeTransport.cpp
         src/transport/StdioTransport.cpp
         extern/glob/match.cpp
@@ -106,6 +108,7 @@ target_sources(Luau.LanguageServer.Test PRIVATE
         tests/TestClient.cpp
         tests/Autocomplete.test.cpp
         tests/AutoImports.test.cpp
+        tests/Bytecode.test.cpp
         tests/MagicFunctions.test.cpp
         tests/Documentation.test.cpp
         tests/TextDocument.test.cpp
@@ -130,29 +133,31 @@ target_sources(Luau.LanguageServer.Test PRIVATE
         tests/Glob.test.cpp
         tests/Workspace.test.cpp
         tests/RequireGraph.test.cpp
+        tests/OnTypeFormatting.test.cpp
         tests/AnalyzeCli.test.cpp
+        tests/CodeAction.test.cpp
         src/AnalyzeCli.cpp # For testing
 )
 
 # TODO: Set Luau.Analysis at O2 to speed up debugging
 if (MSVC)
     list(APPEND LUAU_LSP_OPTIONS /W3 /D_CRT_SECURE_NO_WARNINGS)
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         list(APPEND LUAU_LSP_OPTIONS "/EHsc") # The CMake clang-cl target doesn't enable exceptions by default
-    else()
+    else ()
         list(APPEND LUAU_LSP_OPTIONS /MP) # Distribute compilation across multiple cores; doesn't work with clang-cl
-    endif()
+    endif ()
 else ()
     list(APPEND LUAU_LSP_OPTIONS -Wall)
 endif ()
 
-if(LSP_WERROR)
-    if(MSVC)
+if (LSP_WERROR)
+    if (MSVC)
         list(APPEND LUAU_LSP_OPTIONS /WX) # Warnings are errors
-    else()
+    else ()
         list(APPEND LUAU_LSP_OPTIONS -Werror) # Warnings are errors
-    endif()
-endif()
+    endif ()
+endif ()
 
 if (LSP_BUILD_ASAN)
     if (MSVC)
@@ -162,7 +167,6 @@ if (LSP_BUILD_ASAN)
         target_compile_options(Luau.Compiler PRIVATE /fsanitize=address)
         target_compile_options(Luau.Config PRIVATE /fsanitize=address)
         target_compile_options(Luau.VM PRIVATE /fsanitize=address)
-        target_compile_options(Luau.EqSat PRIVATE /fsanitize=address)
     else ()
         list(APPEND LUAU_LSP_OPTIONS -fsanitize=address)
         target_compile_options(Luau.Ast PRIVATE -fsanitize=address)
@@ -170,7 +174,6 @@ if (LSP_BUILD_ASAN)
         target_compile_options(Luau.Compiler PRIVATE -fsanitize=address)
         target_compile_options(Luau.Config PRIVATE -fsanitize=address)
         target_compile_options(Luau.VM PRIVATE -fsanitize=address)
-        target_compile_options(Luau.EqSat PRIVATE -fsanitize=address)
         target_link_options(Luau.LanguageServer PRIVATE -fsanitize=address)
         target_link_options(Luau.LanguageServer.CLI PRIVATE -fsanitize=address)
         target_link_options(Luau.LanguageServer.Test PRIVATE -fsanitize=address)
@@ -179,18 +182,17 @@ if (LSP_BUILD_ASAN)
         target_link_options(Luau.Compiler PRIVATE -fsanitize=address)
         target_link_options(Luau.Config PRIVATE -fsanitize=address)
         target_link_options(Luau.VM PRIVATE -fsanitize=address)
-        target_link_options(Luau.EqSat PRIVATE -fsanitize=address)
     endif ()
 endif ()
 
-set(EXTERN_INCLUDES extern/json/include extern/glob/include extern/argparse/include extern/toml/include)
+set(EXTERN_INCLUDES extern/json/include extern/glob/include extern/argparse/include extern/toml/include extern/ryml/include)
 
 target_compile_features(Luau.LanguageServer PUBLIC cxx_std_17)
 target_compile_options(Luau.LanguageServer PRIVATE ${LUAU_LSP_OPTIONS})
 target_compile_definitions(Luau.LanguageServer PUBLIC -DLSP_VERSION="${LSP_VERSION}")
 target_compile_definitions(Luau.LanguageServer PUBLIC -DLSP_NAME="${LSP_NAME}")
 target_include_directories(Luau.LanguageServer PUBLIC src/include ${EXTERN_INCLUDES})
-target_link_libraries(Luau.LanguageServer PRIVATE Luau.Ast Luau.Analysis Luau.Compiler)
+target_link_libraries(Luau.LanguageServer PRIVATE Luau.Ast Luau.Analysis Luau.Compiler Luau.VM Luau.CodeGen)
 
 set_target_properties(Luau.LanguageServer.CLI PROPERTIES OUTPUT_NAME luau-lsp)
 target_compile_features(Luau.LanguageServer.CLI PUBLIC cxx_std_17)

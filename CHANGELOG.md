@@ -6,11 +6,121 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Sync to upstream Luau 0.704
+
+## [1.60.0] - 2026-01-04
+
+### Added
+
+- `luau-lsp analyze` will now respect `luau-lsp.fflags.enableNewSolver` if enabled in the provided `--settings` file ([#1321](https://github.com/JohnnyMorganz/luau-lsp/issues/1321))
+- Added `luau-lsp.completion.showAnonymousAutofilledFunction` setting (enabled by default) to control whether the "function (anonymous autofilled)" completion item is shown when autocompleting callback arguments
+- Added `luau-lsp.completion.showDeprecatedItems` setting (enabled by default) to control whether deprecated items are shown in autocomplete suggestions
+- Added language server support for the upcoming Studio Script Sync release, via the Studio Plugin. ([#1295](https://github.com/JohnnyMorganz/luau-lsp/pull/1295))
+  - When the Studio Plugin is enabled alongside Studio Script Sync, it will also populate file path information for synced instances, enabling require functionality.
+  - The synced tree with file path information will be written to the `sourcemap.json` file, giving access for external tools.
+  - External editors will need to implement the `GET /get-file-paths` endpoint for the local HTTP server to support Studio Script Sync
+
+### Changed
+
+- VSCode: the extension will now automatically activate when your opened folder contains any `.luau` files, not just when you explicitly open a Luau file. This allows the Studio Plugin to start up and connect quicker ([#1278](https://github.com/JohnnyMorganz/luau-lsp/pull/1278))
+- Entries marked as deprecated will now be sorted to the bottom of the autocomplete items list ([#1318](https://github.com/JohnnyMorganz/luau-lsp/issues/1318))
+
+### Fixed
+
+- VSCode: fixed cursor being positioned outside of the string after performing automatic quote conversion to backticks ([#1317](https://github.com/JohnnyMorganz/luau-lsp/issues/1317))
+- VSCode: fixed builtin documentation files (api-docs.json) not being downloaded, leading to an error that documentation files do not exist
+
+## [1.59.0] - 2025-12-28
+
+### Added
+
+- Added command `Luau: Compute CodeGen instructions for file` to emit annotated codegen instructions, similar to the bytecode command. External editors can implement this by using the `luau-lsp/codeGen` request. ([#617](https://github.com/JohnnyMorganz/luau-lsp/issues/617))
+- Added support for requiring YAML files (`.yaml` and `.yml`) as Luau data modules, similar to existing JSON and TOML support ([#1267](https://github.com/JohnnyMorganz/luau-lsp/issues/1267))
+- Implemented quick fix code actions for common diagnostics ([#439](https://github.com/JohnnyMorganz/luau-lsp/issues/439)):
+  - `GlobalUsedAsLocal`: Add `local` keyword to fix accidental global variable
+  - `LocalUnused`, `FunctionUnused`, `ImportUnused`: Prefix with `_` to silence, or remove the unused declaration
+  - `UnreachableCode`: Remove unreachable code after early return/error
+  - `RedundantNativeAttribute`: Remove redundant `@native` attribute
+  - Unknown symbol errors now have a quick fix to auto-import missing modules (both string requires and Roblox instance-based requires) and services
+  - Misspelled property names (case mismatches) now have a quick fix to rename to the correct property
+  - Added source file actions "Remove all unused code" and "Add all missing requires" to perform bulk quick fixes at once
+- Added support for automatic quote conversion to backticks when typing `{` inside strings. This can be enabled with the `luau-lsp.format.convertQuotes` configuration option. You may need to enable on-type formatting in your editor (e.g., `format.onType` in VSCode) ([#1298](https://github.com/JohnnyMorganz/luau-lsp/pull/1298))
+
+### Changed
+
+- Aliases defined in a root-level `.luaurc` / `.config.luau` will now be indexed at startup. As such, external alias files will now show up as part of string-require auto-imports if the file has not previously been required ([#1043](https://github.com/JohnnyMorganz/luau-lsp/issues/1043))
+- Find All References and Rename now correctly track property references through metatable `__index` chains, enabling proper support for Luau class patterns using `setmetatable` inheritance ([#961](https://github.com/JohnnyMorganz/luau-lsp/issues/961))
+- VSCode: expanding a single line block (e.g., `function foo() end`, adding a newline to start writing the block) will now move the cursor to the correct indentation ([#220](https://github.com/JohnnyMorganz/luau-lsp/issues/220))
+
+### Fixed
+
+- Fixed non-adjacent comments (such as section headers separated by blank lines) being incorrectly included in hover documentation ([#310](https://github.com/JohnnyMorganz/luau-lsp/issues/310))
+- Function entries correctly show as deprecated in autocomplete if they are marked with `@deprecated` attribute ([#1302](https://github.com/JohnnyMorganz/luau-lsp/issues/1302))
+- Fixed `sourcemapFile` configuration not supporting relative paths from the workspace root (e.g., `subdir/sourcemap.json`) ([#1288](https://github.com/JohnnyMorganz/luau-lsp/issues/1288))
+- Fixed auto-imports not showing up when autocompleting in array-like tables (i.e., before the `=` sign has been written for a property) ([#1062](https://github.com/JohnnyMorganz/luau-lsp/issues/1062))
+- Fixed improper and missing escaping when converting JSON files to Luau data modules. Object keys and string values containing special characters (quotes, newlines, etc.) are now properly escaped ([#426](https://github.com/JohnnyMorganz/luau-lsp/issues/426))
+- Fixed Find All References not including properties accessed via bracket notation (e.g., `obj["property"]`) ([#1084](https://github.com/JohnnyMorganz/luau-lsp/issues/1084))
+- Fixed Rename not supporting properties accessed via bracket notation. Renaming now correctly updates both dot notation (`obj.property`) and bracket notation (`obj["property"]`) references ([#1084](https://github.com/JohnnyMorganz/luau-lsp/issues/1084))
+- Fixed definitions or documentation files not loading when the path to the file contains non-ASCII characters ([#1191](https://github.com/JohnnyMorganz/luau-lsp/issues/1191))
+- Ignored files that are changed externally are correctly marked as dirty internally to ensure the next typecheck will use updated source contents ([#1144](https://github.com/JohnnyMorganz/luau-lsp/issues/1144))
+- Fixed documentation not being shown when hovering over shared properties of unioned table types. Go to Definition now also returns multiple locations when the property is defined in different union members ([#1018](https://github.com/JohnnyMorganz/luau-lsp/issues/1018))
+
+## [1.58.0] - 2025-12-14
+
+### Added
+
+- `Instance:IsPropertyModified()` and `Instance:ResetPropertyToDefault()` will now typecheck and autocomplete against real properties ([#1273](https://github.com/JohnnyMorganz/luau-lsp/issues/1273))
+- Studio Plugin: You can now configure `host` in Settings to change from localhost ([#1280](https://github.com/JohnnyMorganz/luau-lsp/pull/1280))
+
+### Changed
+
+- Sync to upstream Luau 0.703
+- VSCode: add more pointers towards using the Studio Plugin when Rojo information is not available ([#1279](https://github.com/JohnnyMorganz/luau-lsp/pull/1279))
+- Studio Plugin: `Settings.debug` is replaced with `Settings.logLevel` ([#1280](https://github.com/JohnnyMorganz/luau-lsp/pull/1280))
+
+### Fixed
+
+- Fixed missing newline in log messages when using `luau-lsp analyze` ([#1284](https://github.com/JohnnyMorganz/luau-lsp/pull/1284))
+- Fixed crash when configuring `luau-lsp.types.disabledGlobals` on a global extern type property ([#1286](https://github.com/JohnnyMorganz/luau-lsp/pull/1286))
+- Changes to `.config.luau` will now correctly reset the configuration cache and reload configuration ([#1277](https://github.com/JohnnyMorganz/luau-lsp/issues/1277))
+- Studio Plugin: fixed some issues with untracking where connections are not cleaned up ([#1280](https://github.com/JohnnyMorganz/luau-lsp/pull/1280))
+- Fixed incorrect old solver mode configured for the null workspace (default workspace when a Luau file is not part of an opened folder) when `FFlag::LuauUseWorkspacePropToChooseSolver` and new solver is enabled. This would lead to features such as autocompletion not working. ([#1292](https://github.com/JohnnyMorganz/luau-lsp/issues/1292))
+
+## [1.57.1] - 2025-11-30
+
+### Fixed
+
+- Fixed builtin Roblox definitions no longer loading into the language server on VSCode
+
+## [1.57.0] - 2025-11-30
+
+### Added
+
+- `.config.luau` resolution now respects resolution limits and timeouts ([#1246](https://github.com/JohnnyMorganz/luau-lsp/issues/1246))
+- Added `luau-lsp.completion.showKeywords` (default: `true`) to configure whether keywords (`if` / `then` / `and` etc.) are shown during autocomplete ([#1243](https://github.com/JohnnyMorganz/luau-lsp/issues/1243))
+- In VSCode, You can now override the built-in Roblox definitions by configuring an entry for `@roblox` in `luau-lsp.types.definitionFiles`
+- In VSCode, `luau-lsp.types.definitionFiles` and `luau-lsp.types.documentationFiles` now support external URLs (beginning with `https://` / `http://`). When an external link is used, the VSCode extension will download the types from the server. Types are cached for 1 day. You can force a redownload by running `Luau: Redownload API Types` command ([#970](https://github.com/JohnnyMorganz/luau-lsp/issues/970))
+- In VSCode, added `luau-lsp.server.baseLuaurc` to configure a path to the baseline `.luaurc` file to load across all workspaces. External editors can already access this by using the `--base-luaurc` command line flag. ([#1262](https://github.com/JohnnyMorganz/luau-lsp/issues/1262))
+
+### Changed
+
+- Sync to upstream Luau 0.701
+
+### Fixed
+
+- Fixed Signature Help not skipping the first 'self' argument when calling a function with method syntax (`:`), where the function type was generated by a type function ([#1250](https://github.com/JohnnyMorganz/luau-lsp/issues/1250))
+
 ## [1.56.2] - 2025-11-19
 
 ### Changed
 
 - Sync to upstream Luau 0.700
+
+### Fixed
+
+- Fix type mismatch issue for 'types.definitionsFiles' setting in VSCode ([#1253](https://github.com/JohnnyMorganz/luau-lsp/issues/1253))
 
 ## [1.56.1] - 2025-11-04
 

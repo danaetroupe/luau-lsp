@@ -17,13 +17,25 @@ import {
 
 import {
   registerComputeBytecode,
+  registerComputeCodeGen,
   registerComputeCompilerRemarks,
 } from "./bytecode";
+
+import { onTypeFormattingMiddleware } from "./onTypeFormattingMiddleware";
 
 import { registerRequireGraph } from "./requireGraph";
 
 import * as roblox from "./roblox";
 import * as utils from "./utils";
+import {
+  anyFileIsMissing,
+  downloadExternalFiles,
+  DownloadFileDefinition,
+  isExternalFile,
+  outputLocationForDefinition,
+  outputLocationForDocumentation,
+  shouldFetchDefinitions,
+} from "./definitions";
 
 export type PlatformContext = { client: LanguageClient | undefined };
 export type AddArgCallback = (
@@ -148,6 +160,90 @@ class ClientErrorHandler implements ErrorHandler {
   }
 }
 
+const handleExternalFiles = async (
+  context: vscode.ExtensionContext,
+  definitionFiles: {
+    [packageName: string]: string;
+  },
+  documentationFiles: string[],
+  builtinDefinitionFiles: {
+    [packageName: string]: DownloadFileDefinition;
+  },
+  builtinDocumentationFiles: DownloadFileDefinition[],
+) => {
+  const finalDefinitionFiles = new Map<string, string>();
+
+  // Determine a list of external files to fetch
+  const externalFiles: DownloadFileDefinition[] = [];
+  for (let [packageName, definitionPath] of Object.entries(definitionFiles)) {
+    if (isExternalFile(definitionPath)) {
+      const outputLocation = outputLocationForDefinition(context, packageName);
+      externalFiles.push({
+        url: definitionPath,
+        outputUri: outputLocation,
+      });
+      finalDefinitionFiles.set(packageName, outputLocation.fsPath);
+    } else {
+      finalDefinitionFiles.set(packageName, definitionPath);
+    }
+  }
+  documentationFiles = documentationFiles.map((documentationPath) => {
+    if (isExternalFile(documentationPath)) {
+      const outputLocation = outputLocationForDocumentation(
+        context,
+        documentationPath,
+      );
+      externalFiles.push({
+        url: documentationPath,
+        outputUri: outputLocation,
+      });
+      return outputLocation.fsPath;
+    } else {
+      return documentationPath;
+    }
+  });
+
+  for (const [packageName, downloadDefinition] of Object.entries(
+    builtinDefinitionFiles,
+  )) {
+    if (!finalDefinitionFiles.has(packageName)) {
+      externalFiles.push(downloadDefinition);
+      finalDefinitionFiles.set(
+        packageName,
+        downloadDefinition.outputUri.fsPath,
+      );
+    }
+  }
+
+  if (builtinDocumentationFiles) {
+    externalFiles.push(...builtinDocumentationFiles);
+    documentationFiles = documentationFiles.concat(
+      builtinDocumentationFiles.map((info) => info.outputUri.fsPath),
+    );
+  }
+
+  if (externalFiles) {
+    const mustUpdate = await anyFileIsMissing(
+      externalFiles.map((info) => info.outputUri),
+    );
+    if (mustUpdate || shouldFetchDefinitions(context)) {
+      try {
+        await downloadExternalFiles(externalFiles);
+      } catch (err) {
+        vscode.window.showWarningMessage(
+          "Failed to donwload API information: " + err,
+        );
+      }
+    }
+  }
+
+  return {
+    definitionFiles: finalDefinitionFiles,
+    documentationFiles,
+    externalFiles,
+  };
+};
+
 const startLanguageServer = async (context: vscode.ExtensionContext) => {
   for (const disposable of clientDisposables) {
     disposable.dispose();
@@ -171,64 +267,75 @@ const startLanguageServer = async (context: vscode.ExtensionContext) => {
     }
   };
 
-  await roblox.preLanguageServerStart(platformContext, context, addArg);
+  const {
+    definitions: builtinDefinitionFiles,
+    documentation: builtinDocumentationFiles,
+  } = await roblox.preLanguageServerStart(context);
 
   const typesConfig = vscode.workspace.getConfiguration("luau-lsp.types");
 
   // Load extra type definitions
   // TODO: deprecate and remove support of array-based definitionFiles configuration
-  let definitionFiles = typesConfig.get<
-    { [packageName: string]: string } | string[]
-  >("definitionFiles");
-  if (definitionFiles) {
-    if (Array.isArray(definitionFiles)) {
-      definitionFiles = Object.fromEntries(
-        definitionFiles.map((path, index) => ["roblox" + index, path]),
-      );
-    }
+  let definitionFilesConfig =
+    typesConfig.get<{ [packageName: string]: string } | string[]>(
+      "definitionFiles",
+    ) ?? {};
 
-    for (let [packageName, definitionPath] of Object.entries(definitionFiles)) {
-      definitionPath = utils.resolvePath(definitionPath);
-      let uri;
-      if (vscode.workspace.workspaceFolders) {
-        uri = utils.resolveUri(
-          vscode.workspace.workspaceFolders[0].uri,
-          definitionPath,
-        );
-      } else {
-        uri = vscode.Uri.file(definitionPath);
-      }
-      if (await utils.exists(uri)) {
-        addArg(`--definitions:${packageName}=${uri.fsPath}`);
-      } else {
-        vscode.window.showWarningMessage(
-          `Definitions file '${packageName}' at ${definitionPath} does not exist, types will not be provided from this file`,
-        );
-      }
+  if (Array.isArray(definitionFilesConfig)) {
+    definitionFilesConfig = Object.fromEntries(
+      definitionFilesConfig.map((path, index) => ["roblox" + index, path]),
+    );
+  }
+
+  const documentationFilesConfig =
+    typesConfig.get<string[]>("documentationFiles") ?? [];
+
+  const result = await handleExternalFiles(
+    context,
+    definitionFilesConfig,
+    documentationFilesConfig,
+    builtinDefinitionFiles ?? {},
+    builtinDocumentationFiles ?? [],
+  );
+
+  for (let [packageName, definitionPath] of result.definitionFiles) {
+    definitionPath = utils.resolvePath(definitionPath);
+    let uri;
+    if (vscode.workspace.workspaceFolders) {
+      uri = utils.resolveUri(
+        vscode.workspace.workspaceFolders[0].uri,
+        definitionPath,
+      );
+    } else {
+      uri = vscode.Uri.file(definitionPath);
+    }
+    if (await utils.exists(uri)) {
+      addArg(`--definitions:${packageName}=${uri.fsPath}`);
+    } else {
+      vscode.window.showWarningMessage(
+        `Definitions file '${packageName}' at ${definitionPath} does not exist, types will not be provided from this file`,
+      );
     }
   }
 
   // Load extra documentation files
-  const documentationFiles = typesConfig.get<string[]>("documentationFiles");
-  if (documentationFiles) {
-    for (let documentationPath of documentationFiles) {
-      documentationPath = utils.resolvePath(documentationPath);
-      let uri;
-      if (vscode.workspace.workspaceFolders) {
-        uri = utils.resolveUri(
-          vscode.workspace.workspaceFolders[0].uri,
-          documentationPath,
-        );
-      } else {
-        uri = vscode.Uri.file(documentationPath);
-      }
-      if (await utils.exists(uri)) {
-        addArg(`--docs=${uri.fsPath}`);
-      } else {
-        vscode.window.showWarningMessage(
-          `Documentations file at ${documentationPath} does not exist`,
-        );
-      }
+  for (let documentationPath of result.documentationFiles) {
+    documentationPath = utils.resolvePath(documentationPath);
+    let uri;
+    if (vscode.workspace.workspaceFolders) {
+      uri = utils.resolveUri(
+        vscode.workspace.workspaceFolders[0].uri,
+        documentationPath,
+      );
+    } else {
+      uri = vscode.Uri.file(documentationPath);
+    }
+    if (await utils.exists(uri)) {
+      addArg(`--docs=${uri.fsPath}`);
+    } else {
+      vscode.window.showWarningMessage(
+        `Documentations file at ${documentationPath} does not exist`,
+      );
     }
   }
 
@@ -342,6 +449,38 @@ const startLanguageServer = async (context: vscode.ExtensionContext) => {
     );
   }
 
+  // Handle base luaurc
+  const baseLuaurcConfig = serverConfiguration.get<string>("baseLuaurc");
+  if (baseLuaurcConfig) {
+    const baseLuaurcPath = utils.resolvePath(baseLuaurcConfig);
+    let uri;
+    if (vscode.workspace.workspaceFolders) {
+      uri = utils.resolveUri(
+        vscode.workspace.workspaceFolders[0].uri,
+        baseLuaurcPath,
+      );
+    } else {
+      uri = vscode.Uri.file(baseLuaurcPath);
+    }
+    if (await utils.exists(uri)) {
+      addArg(`--base-luaurc=${uri.fsPath}`);
+    } else {
+      vscode.window
+        .showWarningMessage(
+          `Base .luaurc file at ${baseLuaurcPath} does not exist`,
+          "Configure Settings",
+        )
+        .then((action) => {
+          if (action === "Configure Settings") {
+            vscode.commands.executeCommand(
+              "workbench.action.openSettings",
+              "luau-lsp.server.baseLuaurc",
+            );
+          }
+        });
+    }
+  }
+
   const run: Executable = {
     command: serverBinPath,
     args,
@@ -381,6 +520,9 @@ const startLanguageServer = async (context: vscode.ExtensionContext) => {
       supportHtml: true,
     },
     errorHandler: new ClientErrorHandler(context, 4),
+    middleware: {
+      provideOnTypeFormattingEdits: onTypeFormattingMiddleware,
+    },
   };
 
   client = new LanguageClient(
@@ -399,6 +541,7 @@ const startLanguageServer = async (context: vscode.ExtensionContext) => {
 
   clientDisposables.push(...registerComputeBytecode(context, client));
   clientDisposables.push(...registerComputeCompilerRemarks(context, client));
+  clientDisposables.push(...registerComputeCodeGen(context, client));
   clientDisposables.push(...registerRequireGraph(context, client));
   clientDisposables.push(
     vscode.commands.registerCommand("luau-lsp.openWalkthrough", () => {
@@ -407,6 +550,21 @@ const startLanguageServer = async (context: vscode.ExtensionContext) => {
         "JohnnyMorganz.luau-lsp#getting-started",
         false,
       );
+    }),
+  );
+  clientDisposables.push(
+    vscode.commands.registerCommand("luau-lsp.updateApi", async () => {
+      await downloadExternalFiles(result.externalFiles);
+      vscode.window
+        .showInformationMessage(
+          "API Types have been updated, reload server to take effect.",
+          "Reload Language Server",
+        )
+        .then((command) => {
+          if (command === "Reload Language Server") {
+            vscode.commands.executeCommand("luau-lsp.reloadServer");
+          }
+        });
     }),
   );
 
