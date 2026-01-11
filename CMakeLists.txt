@@ -26,7 +26,7 @@ endif ()
 
 project(Luau.LanguageServer LANGUAGES CXX)
 
-find_package(pretty_diagnostics CONFIG REQUIRED)
+add_subdirectory(extern/pretty_diagnostics/pretty_diagnostics)
 
 # Sentry setup
 if (LSP_BUILD_WITH_SENTRY)
